@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+output/*.csv
+ticket/SCRUM-491.md
+.aitlc/
+aitlc.egg-info/
+# Keep the current regression suite tracked.
+# Keep memory tracked when it contains approved QA knowledge.
