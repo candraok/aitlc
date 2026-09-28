@@ -87,21 +87,15 @@ After approval, the CLI asks:
 
 This prevents every generated test case from automatically becoming regression coverage.
 
-## AI provider fallback
+## Configurable AI provider order
 
-Generation uses this provider chain:
+Generation follows the order defined in `AITLC_PROVIDER_ORDER`. Each provider is tried in sequence until one succeeds. The default order when the variable is not set is `openai,gemini,claude`.
 
-```text
-OpenAI
-   ↓ failure
-Gemini primary
-   ↓ failure
-Gemini fallback model
-```
+Supported providers: **OpenAI**, **Gemini**, **Claude (Anthropic)**.
+
+Gemini has an additional fallback model (`GEMINI_FALLBACK_MODEL`) that is tried automatically if the primary Gemini model fails.
 
 The provider and model used are printed after successful generation.
-
-The Gemini integration uses the current Google GenAI Python SDK style (`from google import genai` and `client.models.generate_content(...)`). Google documents `generate_content` as the standard content-generation method and also supports JSON response configuration. See the official Gemini API documentation for current SDK/model details.
 
 ---
 
@@ -117,7 +111,15 @@ AITLC_MODEL=gpt-5.6-luna
 
 GEMINI_API_KEY=replace_with_your_gemini_api_key
 GEMINI_MODEL=gemini-3.8-flash
-GEMINI_FALLBACK_MODEL=gemini-3.7-flash
+GEMINI_FALLBACK_MODEL=gemini-flash-latest
+
+CLAUDE_API_KEY=replace_with_your_claude_api_key
+CLAUDE_MODEL=claude-sonnet-4-6
+CLAUDE_MAX_TOKENS=16000
+
+# Controls which providers are tried and in which order.
+# Default when omitted: openai,gemini,claude
+AITLC_PROVIDER_ORDER=gemini,openai,claude
 
 AITLC_REVIEWER=human-qa
 ```
@@ -340,54 +342,44 @@ Note
 
 # 6. AI provider fallback
 
-The generation engine follows this sequence:
+The generation engine follows the order defined in `AITLC_PROVIDER_ORDER`. Each provider is tried in sequence until one succeeds. When `AITLC_PROVIDER_ORDER=gemini,openai,claude` the flow looks like:
 
 ```text
-                    ┌─────────────┐
-                    │   OpenAI    │
-                    └──────┬──────┘
-                           │
-                      success?
-                       /       \
-                     YES        NO
-                      │          │
-                      ↓          ↓
-                   return    Gemini primary
-                                  │
-                             success?
-                              /       \
-                            YES        NO
-                             │          │
-                             ↓          ↓
-                          return    Gemini fallback
-                                         │
-                                    success?
-                                     /     \
-                                   YES      NO
-                                    │        │
-                                    ↓        ↓
-                                  return   fail
+Gemini primary
+   ↓ fail
+Gemini fallback (GEMINI_FALLBACK_MODEL)
+   ↓ fail
+OpenAI
+   ↓ fail
+Claude
+   ↓ fail
+ERROR: all providers failed
 ```
 
-If OpenAI is unavailable, the CLI prints the failure and attempts Gemini.
+Key behaviors:
 
-If the primary Gemini model also fails, it attempts `GEMINI_FALLBACK_MODEL`.
+- Gemini always tries its primary model first and `GEMINI_FALLBACK_MODEL` second when that model is different from the primary.
+- A provider is automatically skipped (with a printed message) when its API key is not configured — no crash, just a skip.
+- If all configured providers fail, generation stops and no invalid CSV is created.
+- The provider and model used are printed after successful generation.
 
-If all configured providers fail, generation stops and no invalid CSV is created.
-
-The Gemini call is implemented using the Google GenAI Python SDK and JSON response configuration. Google documents the Python pattern as:
+The Gemini call uses the Google GenAI Python SDK:
 
 ```python
 from google import genai
+from google.genai import types
 
 client = genai.Client(api_key="...")
 response = client.models.generate_content(
     model="gemini-3.8-flash",
-    contents="...",
+    contents=["..."],
+    config=types.GenerateContentConfig(
+        response_mime_type="application/json"
+    ),
 )
 ```
 
-For JSON-oriented generation, the SDK supports a JSON response MIME type through `GenerateContentConfig`.
+The OpenAI call uses the Responses API (`client.responses.create`). The Claude call uses the Anthropic Messages API (`client.messages.create`).
 
 ---
 
@@ -688,6 +680,7 @@ aitlc/
 │   └── test-case-generation.md
 ├── scripts/
 │   ├── __init__.py
+│   ├── ai_providers.py
 │   ├── cli.py
 │   ├── generate_test_cases.py
 │   ├── memory.py
@@ -743,7 +736,7 @@ OPENAI_API_KEY
 AITLC_MODEL
 ```
 
-The CLI will automatically try Gemini if `GEMINI_API_KEY` is configured.
+The CLI will automatically try the next provider in `AITLC_PROVIDER_ORDER` if OpenAI fails or is not configured.
 
 ## Gemini fails
 
@@ -757,9 +750,23 @@ GEMINI_FALLBACK_MODEL
 
 The CLI tries the primary Gemini model first and then the fallback model.
 
+## Claude fails
+
+Check:
+
+```text
+CLAUDE_API_KEY
+CLAUDE_MODEL
+CLAUDE_MAX_TOKENS
+```
+
+Claude images are sent before text in the request payload, which is the recommended pattern for Claude vision calls.
+
 ## All AI providers fail
 
 The workflow stops without claiming that test cases were generated successfully. Check the printed provider errors, API credentials, model names, network connectivity, account limits, and provider availability.
+
+Also verify `AITLC_PROVIDER_ORDER` — only providers listed there are attempted.
 
 ## Ticket not found
 
