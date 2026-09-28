@@ -1,4 +1,4 @@
-# DEMO-001 - 
+# DEMO-001
 
 ## Feature
 
