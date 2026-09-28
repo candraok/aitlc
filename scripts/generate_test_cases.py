@@ -1079,6 +1079,20 @@ def main():
     )
 
     parser.add_argument(
+        "--mode",
+        choices=[
+            "cloud",
+            "offline",
+            "hybrid",
+        ],
+        default="cloud",
+        help=(
+            "Generation mode: "
+            "cloud, offline, or hybrid."
+        ),
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
     )
@@ -1271,7 +1285,7 @@ def main():
         "CLAUDE_API_KEY"
     )
 
-    provider_order = (
+    cloud_provider_order = (
         args.provider_order
         or
         os.getenv(
@@ -1280,21 +1294,64 @@ def main():
         )
     )
 
-    if (
-        not openai_api_key
-        and
-        not gemini_api_key
-        and
-        not claude_api_key
-    ):
+    if args.mode == "cloud":
+        provider_order = cloud_provider_order
 
-        print(
-            "ERROR: No AI provider API key "
-            "is configured.",
-            file=sys.stderr,
+    elif args.mode == "offline":
+        provider_order = "ollama"
+
+    elif args.mode == "hybrid":
+        provider_order = (
+            f"{cloud_provider_order},ollama"
         )
 
-        return 1
+    else:
+        raise ValueError(
+            f"Unsupported generation mode: "
+            f"{args.mode}"
+        )
+
+    print(
+        f"Generation mode: {args.mode}"
+    )
+
+    print(
+        f"Effective provider order: "
+        f"{provider_order}"
+    )
+
+    if args.mode == "offline":
+        print(
+            "[AI] Offline mode selected."
+        )
+        print(
+            "[AI] Cloud providers will NOT be called."
+        )
+        print(
+            "[AI] Using Ollama only."
+        )
+
+    elif args.mode == "hybrid":
+        print(
+            "[AI] Hybrid mode selected."
+        )
+        print(
+            "[AI] Cloud providers will be tried "
+            "according to AITLC_PROVIDER_ORDER."
+        )
+        print(
+            "[AI] Ollama will be used only after "
+            "all cloud providers fail."
+        )
+
+    else:
+        print(
+            "[AI] Cloud mode selected."
+        )
+        print(
+            "[AI] Provider order: "
+            f"{cloud_provider_order}"
+        )
 
     # --------------------------------------------------------
     # Models
@@ -1331,6 +1388,42 @@ def main():
         )
     )
 
+    ollama_host = os.getenv(
+        "OLLAMA_HOST",
+        "http://localhost:11434",
+    )
+
+    ollama_model = os.getenv(
+        "OLLAMA_MODEL",
+        "gemma4",
+    )
+
+    ollama_vision_model = os.getenv(
+        "OLLAMA_VISION_MODEL",
+        ollama_model,
+    )
+
+    ollama_timeout = int(
+        os.getenv(
+            "OLLAMA_TIMEOUT",
+            "600",
+        )
+    )
+
+    ollama_num_ctx = int(
+        os.getenv(
+            "OLLAMA_NUM_CTX",
+            "32768",
+        )
+    )
+
+    ollama_temperature = float(
+        os.getenv(
+            "OLLAMA_TEMPERATURE",
+            "0",
+        )
+    )
+
     # --------------------------------------------------------
     # AI generation
     # --------------------------------------------------------
@@ -1339,21 +1432,50 @@ def main():
 
         raw, provider = (
             generate_ai_response(
+                try:
+    raw, provider = (
+        generate_ai_response(
                 prompt=prompt,
                 provider_order=provider_order,
+
                 openai_api_key=openai_api_key,
                 openai_model=openai_model,
+
                 gemini_api_key=gemini_api_key,
                 gemini_model=gemini_model,
                 gemini_fallback_model=(
                     gemini_fallback_model
                 ),
+
                 claude_api_key=claude_api_key,
                 claude_model=claude_model,
                 claude_max_tokens=(
                     claude_max_tokens
                 ),
+
+                ollama_host=ollama_host,
+                ollama_model=ollama_model,
+                ollama_vision_model=(
+                    ollama_vision_model
+                ),
+                ollama_timeout=ollama_timeout,
+                ollama_num_ctx=ollama_num_ctx,
+                ollama_temperature=(
+                    ollama_temperature
+                ),
+
                 image_paths=design_images,
+            )
+        )
+
+    except Exception as exc:
+
+        print(
+            f"ERROR: AI generation failed: {exc}",
+            file=sys.stderr,
+        )
+
+        return 1
             )
         )
 

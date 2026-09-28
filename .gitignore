@@ -5,7 +5,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 output/*.csv
-ticket/SCRUM-491.md
+ticket/SCRUM-*.md
 .aitlc/
 aitlc.egg-info/
 # Keep the current regression suite tracked.
