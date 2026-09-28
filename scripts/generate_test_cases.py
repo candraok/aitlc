@@ -8,17 +8,22 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ai_providers import generate_ai_response
+from ai_providers import (
+    generate_ai_response,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 PROMPT_FILE = (
-    ROOT / "prompts" / "test-case-generation.md"
+    ROOT
+    / "prompts"
+    / "test-case-generation.md"
 )
 
 DEFAULT_OUTPUT_DIR = (
-    ROOT / "output"
+    ROOT
+    / "output"
 )
 
 
@@ -33,25 +38,233 @@ COLUMNS = [
 ]
 
 
+SUPPORTED_IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+}
+
+
+# ============================================================
+# FILE HELPERS
+# ============================================================
+
 def read_text(path: Path) -> str:
+
     return path.read_text(
         encoding="utf-8"
     )
 
 
-def extract_json(text: str) -> dict:
+def resolve_repo_path(
+    reference,
+    base_path=None,
+):
     """
-    Extract JSON from AI response.
+    Resolve design/ticket references.
 
-    Supports:
-    - pure JSON
-    - ```json ... ```
-    - ``` ... ```
+    Priority:
+    1. Absolute path
+    2. Relative to repository root
+    3. Relative to ticket directory
     """
+
+    path = Path(
+        reference.strip()
+    )
+
+    if path.is_absolute():
+
+        return path.resolve()
+
+    candidates = []
+
+    candidates.append(
+        ROOT / path
+    )
+
+    if base_path:
+
+        candidates.append(
+            base_path / path
+        )
+
+    for candidate in candidates:
+
+        if candidate.exists():
+
+            return candidate.resolve()
+
+    return (
+        ROOT / path
+    ).resolve()
+
+
+# ============================================================
+# DESIGN REFERENCES
+# ============================================================
+
+def extract_design_references(
+    ticket_text,
+    ticket_path,
+):
+    """
+    Read image references from the ticket.
+
+    Expected format:
+
+    ## UI Design References
+
+    - design/TASK-1002/update-web.png
+    - design/TASK-1002/update-mobile.png
+
+    Also supports:
+
+    ## Design References
+
+    - design/TASK-1002/example.png
+    """
+
+    lines = ticket_text.splitlines()
+
+    references = []
+
+    inside_design_section = False
+
+    for line in lines:
+
+        stripped = line.strip()
+
+        # ----------------------------------------------------
+        # Detect section
+        # ----------------------------------------------------
+
+        if stripped.startswith("#"):
+
+            heading = stripped.lstrip(
+                "#"
+            ).strip().lower()
+
+            inside_design_section = (
+                "ui design reference" in heading
+                or
+                "design reference" in heading
+                or
+                "figma reference" in heading
+                or
+                "screenshot reference" in heading
+            )
+
+            continue
+
+        if not inside_design_section:
+            continue
+
+        # ----------------------------------------------------
+        # Read markdown bullet
+        # ----------------------------------------------------
+
+        match = re.match(
+            r"^[-*]\s+(.+)$",
+            stripped,
+        )
+
+        if not match:
+            continue
+
+        value = match.group(1).strip()
+
+        # Remove markdown link wrapper:
+        #
+        # [Screenshot](design/TASK-1002/a.png)
+
+        markdown_link = re.match(
+            r"^\[.*?\]\((.+?)\)$",
+            value,
+        )
+
+        if markdown_link:
+
+            value = markdown_link.group(1).strip()
+
+        # Ignore URLs for now.
+        # This implementation handles repository files.
+
+        if re.match(
+            r"^https?://",
+            value,
+            re.I,
+        ):
+
+            print(
+                "[DESIGN] External URL detected "
+                f"but not loaded: {value}"
+            )
+
+            continue
+
+        path = resolve_repo_path(
+            value,
+            ticket_path.parent,
+        )
+
+        suffix = path.suffix.lower()
+
+        if suffix not in SUPPORTED_IMAGE_EXTENSIONS:
+
+            continue
+
+        if path not in references:
+
+            references.append(path)
+
+    return references
+
+
+def validate_design_references(
+    image_paths,
+):
+    """
+    Validate all design references.
+    """
+
+    valid = []
+
+    for image_path in image_paths:
+
+        if not image_path.exists():
+
+            raise FileNotFoundError(
+                "Design image referenced by ticket "
+                f"does not exist: {image_path}"
+            )
+
+        if not image_path.is_file():
+
+            raise ValueError(
+                "Design reference is not a file: "
+                f"{image_path}"
+            )
+
+        valid.append(
+            image_path
+        )
+
+    return valid
+
+
+# ============================================================
+# JSON
+# ============================================================
+
+def extract_json(text: str) -> dict:
 
     text = text.strip()
 
     if text.startswith("```"):
+
         text = re.sub(
             r"^```(?:json)?\s*",
             "",
@@ -65,29 +278,22 @@ def extract_json(text: str) -> dict:
             text,
         )
 
-    return json.loads(text)
+    return json.loads(
+        text
+    )
 
+
+# ============================================================
+# TEST CASE NORMALIZATION
+# ============================================================
 
 def normalize_numbered(items):
-    """
-    Normalize numbered test steps / expected results.
 
-    Example input:
+    if not isinstance(
+        items,
+        list,
+    ):
 
-        [
-            "1. Login",
-            "2. Open page"
-        ]
-
-    Result:
-
-        [
-            "1. Login",
-            "2. Open page"
-        ]
-    """
-
-    if not isinstance(items, list):
         raise ValueError(
             "Expected a list of numbered strings."
         )
@@ -98,7 +304,10 @@ def normalize_numbered(items):
         items,
         start=1,
     ):
-        value = str(item).strip()
+
+        value = str(
+            item
+        ).strip()
 
         value = re.sub(
             r"^\s*\d+\.\s*",
@@ -107,6 +316,7 @@ def normalize_numbered(items):
         )
 
         if not value:
+
             raise ValueError(
                 "A numbered item is empty."
             )
@@ -119,22 +329,24 @@ def normalize_numbered(items):
 
 
 def validate_records(data):
-    """
-    Validate and normalize AI-generated test cases.
-    """
 
     if (
         not isinstance(data, dict)
-        or "test_cases" not in data
+        or
+        "test_cases" not in data
     ):
+
         raise ValueError(
             "AI output must contain "
             "a 'test_cases' array."
         )
 
-    records = data["test_cases"]
+    records = data[
+        "test_cases"
+    ]
 
     if not records:
+
         raise ValueError(
             "No test cases were generated."
         )
@@ -142,21 +354,26 @@ def validate_records(data):
     normalized = []
 
     ids = set()
+
     titles = set()
 
     for index, item in enumerate(
         records,
         start=1,
     ):
-        tc_id = (
-            str(
-                item.get(
-                    "test_case_id",
-                    "",
-                )
-            ).strip()
-            or f"TC{index:03d}"
-        )
+
+        tc_id = str(
+            item.get(
+                "test_case_id",
+                "",
+            )
+        ).strip()
+
+        if not tc_id:
+
+            tc_id = (
+                f"TC{index:03d}"
+            )
 
         title = str(
             item.get(
@@ -165,32 +382,38 @@ def validate_records(data):
             )
         ).strip()
 
-        precondition = (
-            str(
-                item.get(
-                    "precondition",
-                    "",
-                )
-            ).strip()
-            or "None"
-        )
+        precondition = str(
+            item.get(
+                "precondition",
+                "",
+            )
+        ).strip()
 
-        # --------------------------------------------------------
-        # Validate duplicate ID
-        # --------------------------------------------------------
+        if not precondition:
+
+            precondition = "None"
+
+        # ----------------------------------------------------
+        # Duplicate ID
+        # ----------------------------------------------------
 
         if tc_id in ids:
+
             raise ValueError(
-                f"Duplicate Test Case ID: {tc_id}"
+                "Duplicate Test Case ID: "
+                f"{tc_id}"
             )
 
-        ids.add(tc_id)
+        ids.add(
+            tc_id
+        )
 
-        # --------------------------------------------------------
-        # Validate title
-        # --------------------------------------------------------
+        # ----------------------------------------------------
+        # Title
+        # ----------------------------------------------------
 
         if not title:
+
             raise ValueError(
                 f"Test case {tc_id} has no title."
             )
@@ -202,15 +425,19 @@ def validate_records(data):
         ).lower()
 
         if title_key in titles:
+
             raise ValueError(
-                f"Duplicate test-case title: {title}"
+                "Duplicate test-case title: "
+                f"{title}"
             )
 
-        titles.add(title_key)
+        titles.add(
+            title_key
+        )
 
-        # --------------------------------------------------------
-        # Normalize steps
-        # --------------------------------------------------------
+        # ----------------------------------------------------
+        # Steps / expected
+        # ----------------------------------------------------
 
         steps = normalize_numbered(
             item.get(
@@ -231,8 +458,12 @@ def validate_records(data):
                 "Test Case ID": tc_id,
                 "Test case title": title,
                 "Precondition": precondition,
-                "Test steps": "\n".join(steps),
-                "Expected result": "\n".join(expected),
+                "Test steps": "\n".join(
+                    steps
+                ),
+                "Expected result": "\n".join(
+                    expected
+                ),
                 "Status": "",
                 "Note": "",
             }
@@ -241,13 +472,14 @@ def validate_records(data):
     return normalized
 
 
+# ============================================================
+# CSV
+# ============================================================
+
 def write_csv(
     records,
     output_path: Path,
 ):
-    """
-    Write final test cases into CSV.
-    """
 
     output_path.parent.mkdir(
         parents=True,
@@ -268,16 +500,20 @@ def write_csv(
         )
 
         writer.writeheader()
-        writer.writerows(records)
 
+        writer.writerows(
+            records
+        )
+
+
+# ============================================================
+# MEMORY
+# ============================================================
 
 def load_memory_context(
     query,
     limit=15,
 ):
-    """
-    Search historical approved test cases.
-    """
 
     path = (
         ROOT
@@ -286,6 +522,7 @@ def load_memory_context(
     )
 
     if not path.exists():
+
         return []
 
     query_tokens = set(
@@ -306,24 +543,37 @@ def load_memory_context(
         for line in file:
 
             if not line.strip():
+
                 continue
 
-            row = json.loads(line)
+            row = json.loads(
+                line
+            )
 
-            # Only approved memory should be
-            # used as historical knowledge.
-            if row.get("status") not in {
+            if row.get(
+                "status"
+            ) not in {
                 None,
                 "",
                 "approved",
             }:
+
                 continue
 
             text = " ".join(
                 [
-                    row.get("ticket", ""),
-                    row.get("title", ""),
-                    row.get("behavior", ""),
+                    row.get(
+                        "ticket",
+                        "",
+                    ),
+                    row.get(
+                        "title",
+                        "",
+                    ),
+                    row.get(
+                        "behavior",
+                        "",
+                    ),
                     " ".join(
                         row.get(
                             "tags",
@@ -343,16 +593,21 @@ def load_memory_context(
 
             overlap = len(
                 query_tokens
-                & row_tokens
+                &
+                row_tokens
             )
 
             if overlap:
+
                 matches.append(
                     (
                         overlap
-                        / max(
+                        /
+                        max(
                             1,
-                            len(query_tokens),
+                            len(
+                                query_tokens
+                            ),
                         ),
                         row,
                     )
@@ -365,17 +620,19 @@ def load_memory_context(
 
     return [
         row
-        for _, row in matches[:limit]
+        for _, row
+        in matches[:limit]
     ]
 
+
+# ============================================================
+# REGRESSION
+# ============================================================
 
 def load_regression_context(
     query,
     limit=15,
 ):
-    """
-    Search active regression cases.
-    """
 
     path = (
         ROOT
@@ -384,6 +641,7 @@ def load_regression_context(
     )
 
     if not path.exists():
+
         return []
 
     query_tokens = set(
@@ -402,7 +660,9 @@ def load_regression_context(
         newline="",
     ) as file:
 
-        for row in csv.DictReader(file):
+        for row in csv.DictReader(
+            file
+        ):
 
             text = " ".join(
                 [
@@ -435,16 +695,21 @@ def load_regression_context(
 
             overlap = len(
                 query_tokens
-                & row_tokens
+                &
+                row_tokens
             )
 
             if overlap:
+
                 matches.append(
                     (
                         overlap
-                        / max(
+                        /
+                        max(
                             1,
-                            len(query_tokens),
+                            len(
+                                query_tokens
+                            ),
                         ),
                         row,
                     )
@@ -457,23 +722,26 @@ def load_regression_context(
 
     return [
         row
-        for _, row in matches[:limit]
+        for _, row
+        in matches[:limit]
     ]
 
+
+# ============================================================
+# PREVIOUS OUTPUT
+# ============================================================
 
 def read_previous_output(
     path: Path,
     limit=60,
 ):
-    """
-    Load a previous generated CSV
-    when revision mode is used.
-    """
 
     if (
         not path
-        or not path.exists()
+        or
+        not path.exists()
     ):
+
         return []
 
     with path.open(
@@ -483,30 +751,34 @@ def read_previous_output(
     ) as file:
 
         rows = list(
-            csv.DictReader(file)
+            csv.DictReader(
+                file
+            )
         )
 
     return rows[:limit]
 
 
+# ============================================================
+# PROMPT
+# ============================================================
+
 def build_prompt(
-    ticket_text: str,
+    ticket_text,
     memory_context,
     regression_context,
+    design_context,
     previous_cases=None,
     revision="",
 ):
-    """
-    Build the complete AI-TLC prompt.
-    """
 
     instructions = read_text(
         PROMPT_FILE
     )
 
-    # ============================================================
-    # MEMORY CONTEXT
-    # ============================================================
+    # --------------------------------------------------------
+    # Memory
+    # --------------------------------------------------------
 
     memory_text = (
         "No related historical "
@@ -533,16 +805,17 @@ Behavior Version: {row.get('behavior_version', 1)}
             )
 
         memory_text = (
-            "\n---\n".join(chunks)
+            "\n---\n"
+            .join(chunks)
         )
 
-    # ============================================================
-    # REGRESSION CONTEXT
-    # ============================================================
+    # --------------------------------------------------------
+    # Regression
+    # --------------------------------------------------------
 
     regression_text = (
-        "No related active regression "
-        "cases were found."
+        "No related active "
+        "regression cases were found."
     )
 
     if regression_context:
@@ -561,39 +834,38 @@ Expected Result: {row.get('Expected result')}
             )
 
         regression_text = (
-            "\n---\n".join(chunks)
+            "\n---\n"
+            .join(chunks)
         )
 
-    # ============================================================
-    # REVISION CONTEXT
-    # ============================================================
+    # --------------------------------------------------------
+    # Design
+    # --------------------------------------------------------
 
-    revision_text = (
-        "No revision requested."
-    )
+    if design_context:
 
-    if revision:
+        design_text = "\n".join(
+            [
+                f"- {path}"
+                for path
+                in design_context
+            ]
+        )
 
-        revision_text = f"""
-Revision requested by the human QA reviewer:
+    else:
 
-{revision}
+        design_text = (
+            "No UI design images "
+            "were supplied."
+        )
 
-Revision rules:
-- Keep valid existing cases when they are still supported by the ticket.
-- Modify only affected cases where practical.
-- Add missing scenarios required by the revision.
-- Remove or consolidate duplicates.
-- Do not invent behavior not supported by the ticket or historical context.
-"""
-
-    # ============================================================
-    # PREVIOUS GENERATED CASES
-    # ============================================================
+    # --------------------------------------------------------
+    # Previous cases
+    # --------------------------------------------------------
 
     previous_text = (
-        "No previous generated CSV "
-        "was supplied."
+        "No previous generated "
+        "CSV was supplied."
     )
 
     if previous_cases:
@@ -609,19 +881,44 @@ Title: {row.get('Test case title')}
 Precondition: {row.get('Precondition')}
 Steps:
 {row.get('Test steps')}
-
 Expected:
 {row.get('Expected result')}
 """
             )
 
         previous_text = (
-            "\n---\n".join(chunks)
+            "\n---\n"
+            .join(chunks)
         )
 
-    # ============================================================
-    # FINAL PROMPT
-    # ============================================================
+    # --------------------------------------------------------
+    # Revision
+    # --------------------------------------------------------
+
+    revision_text = (
+        "No revision requested."
+    )
+
+    if revision:
+
+        revision_text = f"""
+Revision requested by the human QA reviewer:
+
+{revision}
+
+Revision rules:
+
+- Keep valid existing cases when they are still supported.
+- Modify affected cases where practical.
+- Add missing scenarios required by the revision.
+- Remove or consolidate duplicates.
+- Do not invent behavior unsupported by ticket,
+  historical context, or design evidence.
+"""
+
+    # --------------------------------------------------------
+    # Final prompt
+    # --------------------------------------------------------
 
     return f"""
 {instructions}
@@ -630,15 +927,13 @@ Expected:
 
 Use this as the current approved regression baseline.
 
-If the ticket does not explicitly change a relevant behavior,
-preserve its coverage.
+If the ticket does not explicitly change a relevant
+behavior, preserve the relevant regression coverage.
 
-If the ticket explicitly changes it,
-update the affected expectation rather than keeping
-contradictory active coverage.
+If the ticket explicitly changes a behavior, update
+the affected expectation.
 
 {regression_text}
-
 
 ## Historical Test Case Memory
 
@@ -647,74 +942,118 @@ Use this memory as regression knowledge.
 IMPORTANT:
 
 - Existing memory represents previously tested behavior.
-- Do not delete or ignore relevant existing behavior merely because the new ticket does not repeat it.
-- If the new ticket explicitly changes behavior, the current ticket requirement takes precedence.
-- If behavior appears unchanged, preserve relevant historical scenarios as regression coverage.
+- Do not ignore relevant historical behavior merely
+  because the current ticket does not repeat it.
+- If the new ticket explicitly changes behavior,
+  the current ticket takes precedence.
+- If historical behavior appears applicable,
+  preserve it as regression coverage.
 - Do not blindly copy irrelevant historical cases.
-- Do not claim a behavior is unchanged unless the ticket and memory support that conclusion.
-- If requirements conflict with memory, treat the current explicit requirement as authoritative and add/update regression coverage accordingly.
+- If applicability is ambiguous, flag it for human QA.
+- Do not invent behavior from silence.
 
 {memory_text}
 
+## UI / FIGMA / SCREENSHOT DESIGN REFERENCES
+
+The following images are attached to this request:
+
+{design_text}
+
+IMPORTANT DESIGN RULES:
+
+- Read every supplied design image carefully.
+- Treat the images as design evidence, not automatically
+  as business requirements.
+- Identify visible UI elements such as:
+  fields, labels, required indicators, buttons,
+  tabs, dropdowns, dialogs, error states, navigation,
+  disabled states, and mobile/web differences.
+- Generate UI test cases for relevant visible behavior.
+- If a design observation conflicts with an explicit
+  ticket requirement, the explicit requirement takes
+  precedence.
+- Do not invent backend behavior merely from visual design.
+- Do not assume that every visible element requires a
+  separate test case if it belongs to the same coherent
+  test objective.
+- When design evidence is used, mention the design source
+  in the Note field if appropriate.
+- Compare web and mobile screenshots when both exist.
+- Identify relevant responsive or platform-specific
+  behavior.
+- If an important design behavior is ambiguous,
+  preserve it as a human QA review concern.
 
 ## Previous Generated Test Cases
 
 {previous_text}
 
-
 ## Revision Request
 
 {revision_text}
-
 
 ## Current Ticket
 
 {ticket_text}
 
+## Final Generation Rules
 
-## Final instruction
+Generate the complete production-oriented test suite.
+
+The test suite must combine:
+
+1. Current ticket requirements.
+2. Applicable historical test behavior.
+3. Active regression coverage.
+4. Relevant UI/design evidence.
+5. Positive scenarios.
+6. Negative scenarios.
+7. Edge cases.
+8. Boundary cases.
+9. Realistic customer/user scenarios.
+10. Relevant frontend behavior.
+
+Historical behavior may be inherited from previous features
+even when the current ticket does not repeat the rule,
+provided there is no evidence that the behavior changed.
+
+Do not blindly copy historical cases.
 
 Return JSON only.
 
-The response must have this structure:
+Every test case must contain:
 
-{{
-  "test_cases": [
-    {{
-      "test_case_id": "TC001",
-      "test_case_title": "Example title",
-      "precondition": "None",
-      "test_steps": [
-        "1. First step",
-        "2. Second step"
-      ],
-      "expected_result": [
-        "1. First expected result",
-        "2. Second expected result"
-      ]
-    }}
-  ]
-}}
+- test_case_id
+- test_case_title
+- precondition
+- test_steps
+- expected_result
+- status
+- note
 
-Rules:
+Status must be an empty string.
 
-- Return valid JSON only.
-- Do not use Markdown.
-- Do not use ```json.
-- Every test case must contain test_steps.
-- Every test case must contain expected_result.
-- Test steps must be sequential.
-- Expected results must be sequential.
-- Do not create duplicate test cases.
+Note must be an empty string unless the prompt requires
+design or review metadata.
+
+Every test step must be one numbered item.
+
+Every expected-result item must be one numbered item.
 """
 
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Generate AI-TLC test cases "
-            "with OpenAI -> Gemini -> Claude fallback."
+            "Generate AI-TLC test cases using "
+            "OpenAI, Gemini, and Claude with "
+            "optional UI design images."
         )
     )
 
@@ -729,6 +1068,14 @@ def main():
 
     parser.add_argument(
         "--model",
+    )
+
+    parser.add_argument(
+        "--provider-order",
+        help=(
+            "Override AITLC_PROVIDER_ORDER. "
+            "Example: claude,gemini,openai"
+        ),
     )
 
     parser.add_argument(
@@ -753,14 +1100,13 @@ def main():
 
     args = parser.parse_args()
 
-    # ============================================================
-    # TICKET
-    # ============================================================
+    # --------------------------------------------------------
+    # Ticket
+    # --------------------------------------------------------
 
-    ticket_path = (
-        Path(args.ticket)
-        .resolve()
-    )
+    ticket_path = Path(
+        args.ticket
+    ).resolve()
 
     if not ticket_path.exists():
 
@@ -776,9 +1122,37 @@ def main():
         ticket_path
     )
 
-    # ============================================================
-    # MEMORY
-    # ============================================================
+    # --------------------------------------------------------
+    # Design images
+    # --------------------------------------------------------
+
+    try:
+
+        design_images = (
+            extract_design_references(
+                ticket_text,
+                ticket_path,
+            )
+        )
+
+        design_images = (
+            validate_design_references(
+                design_images
+            )
+        )
+
+    except Exception as exc:
+
+        print(
+            f"ERROR: Design reference error: {exc}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+    # --------------------------------------------------------
+    # Memory
+    # --------------------------------------------------------
 
     memory_context = (
         load_memory_context(
@@ -787,9 +1161,9 @@ def main():
         )
     )
 
-    # ============================================================
-    # REGRESSION
-    # ============================================================
+    # --------------------------------------------------------
+    # Regression
+    # --------------------------------------------------------
 
     regression_context = (
         load_regression_context(
@@ -798,32 +1172,37 @@ def main():
         )
     )
 
-    # ============================================================
-    # PREVIOUS OUTPUT
-    # ============================================================
+    # --------------------------------------------------------
+    # Previous generated cases
+    # --------------------------------------------------------
 
     previous_cases = []
 
     if args.previous_output:
 
+        previous_output_path = (
+            Path(
+                args.previous_output
+            ).resolve()
+        )
+
         previous_cases = (
             read_previous_output(
-                Path(
-                    args.previous_output
-                ).resolve()
+                previous_output_path
             )
         )
 
-    # ============================================================
-    # BUILD PROMPT
-    # ============================================================
+    # --------------------------------------------------------
+    # Prompt
+    # --------------------------------------------------------
 
     prompt = build_prompt(
-        ticket_text,
-        memory_context,
-        regression_context,
-        previous_cases,
-        args.revision,
+        ticket_text=ticket_text,
+        memory_context=memory_context,
+        regression_context=regression_context,
+        design_context=design_images,
+        previous_cases=previous_cases,
+        revision=args.revision,
     )
 
     print(
@@ -835,6 +1214,17 @@ def main():
         f"Related regression entries: "
         f"{len(regression_context)}"
     )
+
+    print(
+        f"Design images: "
+        f"{len(design_images)}"
+    )
+
+    for image_path in design_images:
+
+        print(
+            f"  - {image_path}"
+        )
 
     if previous_cases:
 
@@ -849,19 +1239,21 @@ def main():
             "Revision mode: enabled"
         )
 
-    # ============================================================
-    # DRY RUN
-    # ============================================================
+    # --------------------------------------------------------
+    # Dry run
+    # --------------------------------------------------------
 
     if args.dry_run:
 
-        print(prompt)
+        print(
+            prompt
+        )
 
         return 0
 
-    # ============================================================
-    # LOAD ENVIRONMENT
-    # ============================================================
+    # --------------------------------------------------------
+    # Environment
+    # --------------------------------------------------------
 
     load_dotenv(
         ROOT / ".env"
@@ -879,57 +1271,39 @@ def main():
         "CLAUDE_API_KEY"
     )
 
-    provider_order = os.getenv(
-        "AITLC_PROVIDER_ORDER",
-        "openai,gemini,claude",
+    provider_order = (
+        args.provider_order
+        or
+        os.getenv(
+            "AITLC_PROVIDER_ORDER",
+            "openai,gemini,claude",
+        )
     )
 
-    # ============================================================
-    # CHECK API KEYS
-    # ============================================================
-
-    if not any(
-        [
-            openai_api_key,
-            gemini_api_key,
-            claude_api_key,
-        ]
+    if (
+        not openai_api_key
+        and
+        not gemini_api_key
+        and
+        not claude_api_key
     ):
 
         print(
-            "ERROR: No AI API key is configured.",
-            file=sys.stderr,
-        )
-
-        print(
-            "Configure at least one of:",
-            file=sys.stderr,
-        )
-
-        print(
-            "OPENAI_API_KEY",
-            file=sys.stderr,
-        )
-
-        print(
-            "GEMINI_API_KEY",
-            file=sys.stderr,
-        )
-
-        print(
-            "CLAUDE_API_KEY",
+            "ERROR: No AI provider API key "
+            "is configured.",
             file=sys.stderr,
         )
 
         return 1
 
-    # ============================================================
-    # MODEL CONFIGURATION
-    # ============================================================
+    # --------------------------------------------------------
+    # Models
+    # --------------------------------------------------------
 
     openai_model = (
         args.model
-        or os.getenv(
+        or
+        os.getenv(
             "AITLC_MODEL",
             "gpt-5.6-luna",
         )
@@ -957,27 +1331,30 @@ def main():
         )
     )
 
-    # ============================================================
-    # AI GENERATION
-    # ============================================================
+    # --------------------------------------------------------
+    # AI generation
+    # --------------------------------------------------------
 
     try:
 
-        raw, provider = generate_ai_response(
-            prompt=prompt,
-
-            provider_order=provider_order,
-
-            openai_api_key=openai_api_key,
-            openai_model=openai_model,
-
-            gemini_api_key=gemini_api_key,
-            gemini_model=gemini_model,
-            gemini_fallback_model=gemini_fallback_model,
-
-            claude_api_key=claude_api_key,
-            claude_model=claude_model,
-            claude_max_tokens=claude_max_tokens,
+        raw, provider = (
+            generate_ai_response(
+                prompt=prompt,
+                provider_order=provider_order,
+                openai_api_key=openai_api_key,
+                openai_model=openai_model,
+                gemini_api_key=gemini_api_key,
+                gemini_model=gemini_model,
+                gemini_fallback_model=(
+                    gemini_fallback_model
+                ),
+                claude_api_key=claude_api_key,
+                claude_model=claude_model,
+                claude_max_tokens=(
+                    claude_max_tokens
+                ),
+                image_paths=design_images,
+            )
         )
 
     except Exception as exc:
@@ -989,9 +1366,9 @@ def main():
 
         return 1
 
-    # ============================================================
-    # JSON EXTRACTION + VALIDATION
-    # ============================================================
+    # --------------------------------------------------------
+    # Validate AI output
+    # --------------------------------------------------------
 
     try:
 
@@ -1011,38 +1388,31 @@ def main():
         )
 
         print(
-            "Raw AI response:",
-            file=sys.stderr,
-        )
-
-        print(
             raw,
             file=sys.stderr,
         )
 
         return 1
 
-    # ============================================================
-    # CSV OUTPUT
-    # ============================================================
+    # --------------------------------------------------------
+    # Output
+    # --------------------------------------------------------
 
     output_path = (
-        Path(args.output).resolve()
+        Path(
+            args.output
+        ).resolve()
         if args.output
-        else (
-            DEFAULT_OUTPUT_DIR
-            / f"{ticket_path.stem}-test-cases.csv"
-        )
+        else
+        DEFAULT_OUTPUT_DIR
+        /
+        f"{ticket_path.stem}-test-cases.csv"
     )
 
     write_csv(
         records,
         output_path,
     )
-
-    # ============================================================
-    # RESULT
-    # ============================================================
 
     print(
         f"Generated {len(records)} test cases."
@@ -1056,30 +1426,11 @@ def main():
         f"CSV: {output_path}"
     )
 
-    print(
-        ""
-    )
-
-    print(
-        "Next step:"
-    )
-
-    print(
-        "1. Review the generated CSV."
-    )
-
-    print(
-        "2. Validate the CSV."
-    )
-
-    print(
-        "3. Approve it before storing into memory."
-    )
-
     return 0
 
 
 if __name__ == "__main__":
+
     raise SystemExit(
         main()
     )
