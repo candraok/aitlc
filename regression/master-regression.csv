@@ -1,1 +1,110 @@
-Test Case ID,Test case title,Precondition,Test steps,Expected result,Status,Note
+﻿Test Case ID,Test case title,Precondition,Test steps,Expected result,Status,Note
+TC001,Verify Edit Screen Initial Load and Pre-population for Case 1 (Current/Future Period),User is authenticated and navigates to 'Edit Tipe Insentif' for a config where valid_from and valid_to are both current or future dates.,"1. Open the Edit Tipe Insentif screen for the target config.
+2. Observe the breadcrumb navigation path.
+3. Verify the status and incentive point name in the read-only header.
+4. Verify the 'Berlaku sejak' (valid_from) and 'Berlaku sampai' (valid_to) fields.
+5. Verify the rendered Channel boxes, Tipe Salesman boxes, and Slab tables.
+6. Verify the editability of date fields, channels, groups, and slab rows.","1. Screen loads successfully via GET endpoint 14.3.
+2. Breadcrumb displays 'Manajemen Insentif / Tipe Insentif / Edit Tipe Insentif'.
+3. Header displays slab_config.status and incentive_point.incentive_point_name as read-only text.
+4. Date pickers are pre-filled with valid_from and valid_to values and are editable.
+5. Existing channels, salesperson groups (mapped with levels 1->Sales, 2->SPV/KAO, 3->RSO), and slab thresholds are pre-filled accurately.
+6. Case 1 allows full editing: date fields, '+ Tambah Channel', '+ Tipe Salesman', slab inputs, and delete icons are active and editable.",,
+TC002,Verify Case 2 Edit Restrictions When valid_from is Past and valid_to is Current/Future,"User navigates to Edit Tipe Insentif for a config where valid_from is in the past, but valid_to is current or future.","1. Open the Edit Tipe Insentif screen for the Case 2 config.
+2. Inspect the 'Berlaku sejak' (valid_from) input field.
+3. Inspect the 'Berlaku sampai' (valid_to) input field.
+4. Inspect the 'Pilih Channel dan Tipe Salesman' section, including groups and slab tables.","1. Screen loads with existing config details pre-populated.
+2. 'Berlaku sejak' field is disabled and read-only.
+3. 'Berlaku sampai' field remains active and editable.
+4. The entire 'Pilih Channel dan Tipe Salesman' section is rendered read-only: '+ Tambah Channel', '+ Tipe Salesman', slab inputs, and delete icons are disabled or hidden.",,
+TC003,Verify Case 3 Restriction: Edit Action Unavailable When Both valid_from and valid_to are in the Past,A slab config exists where both valid_from and valid_to are in the past.,"1. Navigate to the Tipe Insentif list screen.
+2. Locate the expired slab config record (both valid_from and valid_to in the past).
+3. Click on the 'Pilih Aksi' dropdown/action menu for that row.
+4. Attempt to access the edit URL directly via browser address bar.","1. List screen loads records properly.
+2. Expired record displays historical past dates.
+3. 'Edit' option is completely omitted/hidden from the 'Pilih Aksi' menu.
+4. Direct navigation to the edit URL prevents editing (redirects or displays EDIT_NOT_PERMITTED error banner).",,
+TC004,Verify Save Button Behavior When No Changes are Made (Pristine State),User opens an editable slab config (Case 1) with existing data.,"1. Load the Edit Tipe Insentif screen.
+2. Do not modify any date, channel, group, or slab fields.
+3. Check the state of the 'Simpan' button.
+4. Click the 'Simpan' button if clickable.","1. Form loads with pre-filled fetched data.
+2. Dirty tracking evaluates both is_config_updated and is_slabs_updated to false.
+3. 'Simpan' button is disabled or acts as a no-op.
+4. No PATCH network request is triggered and no confirmation modal opens.",,
+TC005,"Verify Request Payload When Only Dates are Changed (is_config_updated: true, is_slabs_updated: false)",User opens a Case 1 config in the Edit screen.,"1. Modify 'Berlaku sampai' (valid_to) to a different valid future date without touching any channel/group/slab data.
+2. Click 'Simpan'.
+3. On the 'Simpan Tipe Insentif' modal, click 'Ya, Simpan'.
+4. Inspect the outgoing PATCH request body to endpoint 14.5.","1. 'Berlaku sampai' field updates with the new date.
+2. Confirmation modal 'Simpan Tipe Insentif' appears.
+3. PATCH request is triggered.
+4. Payload contains is_config_updated: true, is_slabs_updated: false, updated_valid_to, and updated_valid_from; the 'groups' array is completely omitted.",,
+TC006,"Verify Request Payload When Only Slabs/Groups are Changed (is_config_updated: false, is_slabs_updated: true)",User opens a Case 1 config in the Edit screen.,"1. Keep 'Berlaku sejak' and 'Berlaku sampai' unchanged.
+2. Modify a slab value or points in an existing slab table.
+3. Click 'Simpan'.
+4. In the confirmation modal, click 'Ya, Simpan'.
+5. Inspect the outgoing PATCH request payload.","1. Date fields remain pristine.
+2. Slab values reflect the new inputs.
+3. Confirmation modal appears.
+4. Form submits successfully.
+5. Payload contains is_config_updated: false, is_slabs_updated: true, and the full 'groups' array; updated_valid_from and updated_valid_to are omitted.",,
+TC007,Verify Request Payload When Both Dates and Slabs are Changed (Both Flags True),User opens a Case 1 config in the Edit screen.,"1. Update the 'Berlaku sampai' date.
+2. Add a new slab row to an existing salesperson group.
+3. Click 'Simpan'.
+4. Click 'Ya, Simpan' in the confirmation modal.
+5. Inspect the outgoing PATCH request payload.","1. Both date and slab fields reflect modifications.
+2. New slab row is appended locally.
+3. Confirmation modal opens.
+4. PATCH request executes.
+5. Payload contains is_config_updated: true, is_slabs_updated: true, updated_valid_from, updated_valid_to, and the complete 'groups' array.",,
+TC008,Verify Deletion of Slab Row and Group Triggers Full-Replace Omission,"User opens a Case 1 config with multiple channels, groups, and slab rows.","1. Delete one slab row using its delete icon.
+2. Delete an entire Tipe Salesman group using its delete icon.
+3. Click 'Simpan' and confirm via 'Ya, Simpan'.
+4. Inspect the outgoing PATCH request 'groups' array.","1. Deleted slab row is removed from the UI table.
+2. Deleted group is removed from the UI.
+3. Confirmation modal opens and submission proceeds.
+4. The submitted 'groups' array contains only the remaining groups and slab rows, omitting the deleted ones to trigger backend full-replace deprecation.",,
+TC009,Verify Edit Screen Layout and Persistence for Non-Channel Flow (requires_channel = false),User opens an edit screen for an incentive point where requires_channel is false.,"1. Load the Edit Tipe Insentif screen.
+2. Verify the screen layout for channel elements.
+3. Modify a slab value under a Tipe Salesman box.
+4. Click 'Simpan' and confirm with 'Ya, Simpan'.","1. Screen loads successfully.
+2. No Channel dropdown boxes or '+ Tambah Channel' buttons appear; Tipe Salesman boxes render directly below Skema Insentif.
+3. Slab modification updates locally.
+4. PATCH request sends the updated groups without channel mappings, toast 'Tipe insentif berhasil diubah' appears, and user is redirected to the list screen.",,
+TC010,Verify Client-Side Validation: updated_valid_to Earlier Than updated_valid_from,User is on the Edit Tipe Insentif screen (Case 1).,"1. Select a 'Berlaku sampai' date that is strictly earlier than 'Berlaku sejak'.
+2. Observe the field validation message.
+3. Attempt to click 'Simpan'.","1. Date picker sets the invalid date.
+2. Client-side error message is displayed on 'Berlaku sampai' indicating it cannot be earlier than 'Berlaku sejak'.
+3. 'Simpan' button remains disabled or blocks form submission.",,
+TC011,Verify Client-Side Validation: Duplicate Channel and Salesperson Combination Blocked,"User is on the Edit Tipe Insentif screen with Channel A and Salesperson Type (e.g., SPV/KAO, Level 2) already configured.","1. Click '+ Tipe Salesman' under Channel A.
+2. Select the identical Salesperson Type and Level that already exists under Channel A.
+3. Attempt to save the form.","1. New salesman group box is added.
+2. Client-side validation triggers an error indicating duplicate combination of channel, salesperson type, and level.
+3. Form submission is blocked and no request is sent.",,
+TC012,"Verify Client-Side Validation: Exact Duplicate (operator, value) Within a Slab Group Blocked",User is on the Edit Tipe Insentif screen with an existing slab row containing operator '=' and value '10'.,"1. In the same slab table, add or edit another row with operator '=' and value '10'.
+2. Attempt to submit the form via 'Simpan'.","1. Second row contains duplicate operator and value.
+2. Client-side error message highlights the duplicate (operator, value) conflict within the group.
+3. Form submission is blocked until the duplicate is resolved.",,
+TC013,Verify Slab Table Allows Same Value with Different Operators,User is editing a slab table with an existing row having operator '>' and value '10'.,"1. Add a new row in the same group with operator '<=' and value '10'.
+2. Set points for the new row.
+3. Verify client-side validation state.
+4. Click 'Simpan' and confirm 'Ya, Simpan'.","1. New row is populated with operator '<=' and value '10'.
+2. Points value is accepted.
+3. No client-side duplicate error is displayed (different operators with same value are permitted).
+4. Confirmation modal opens and PATCH request submits successfully.",,
+TC014,Verify Cancel Flow: 'Batal' Modal and Discard Changes,User has modified fields on the Edit Tipe Insentif screen.,"1. Modify 'Berlaku sampai' and edit a slab value.
+2. Click the 'Batal' button.
+3. Verify the confirmation modal 'Batal Simpan Tipe Insentif?' appears.
+4. Click 'Batalkan Perubahan' in the modal.","1. Changes exist in local state.
+2. Modal opens with title 'Batal Simpan Tipe Insentif?'.
+3. Action options to discard or stay are presented.
+4. Local changes are discarded, no API call is made, and user is redirected back to the list screen.",,
+TC015,Verify Full-Page Error State on Missing Incentive Point or Slab Set,User attempts to navigate to Edit Tipe Insentif with an invalid ID.,"1. Open the Edit Tipe Insentif page with an ID that returns server error 'INCENTIVE_POINT_NOT_FOUND' or 'SLAB_SET_NOT_FOUND'.
+2. Observe the rendered screen.","1. GET request 14.3 responds with the error code.
+2. The form is not rendered; a full-page error state is displayed informing the user that the incentive point or slab set was not found.",,
+TC016,Verify Server Error Handling and Banner Mapping on Save,User submits modifications on the Edit screen.,"1. Submit form modifications triggering a 'CONFIG_OVERLAP' response from backend.
+2. Verify UI display.
+3. Trigger a 'CONFIG_CHANGE_RUN_IN_PROGRESS' error response from backend.
+4. Verify UI display.","1. Backend returns error code CONFIG_OVERLAP.
+2. Period fields are highlighted and a config-level error banner is displayed.
+3. Backend returns error code CONFIG_CHANGE_RUN_IN_PROGRESS.
+4. A full-form error banner is displayed and further saving is blocked.",,
