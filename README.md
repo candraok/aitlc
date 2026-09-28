@@ -91,11 +91,28 @@ This prevents every generated test case from automatically becoming regression c
 
 Generation follows the order defined in `AITLC_PROVIDER_ORDER`. Each provider is tried in sequence until one succeeds. The default order when the variable is not set is `openai,gemini,claude`.
 
-Supported providers: **OpenAI**, **Gemini**, **Claude (Anthropic)**.
+Supported providers: **OpenAI**, **Gemini**, **Claude (Anthropic)**, **Ollama (local)**.
 
 Gemini has an additional fallback model (`GEMINI_FALLBACK_MODEL`) that is tried automatically if the primary Gemini model fails.
 
 The provider and model used are printed after successful generation.
+
+## Cloud / Offline / Hybrid generation modes
+
+The CLI now asks you to choose a generation mode before processing a ticket:
+
+```text
+Select AI generation mode:
+  1. Cloud
+  2. Offline
+  3. Hybrid
+```
+
+| Mode | Behavior |
+|------|----------|
+| Cloud | Uses only the cloud providers in `AITLC_PROVIDER_ORDER` (OpenAI, Gemini, Claude). |
+| Offline | Uses only the local Ollama model. No cloud API keys required. |
+| Hybrid | Tries cloud providers first; falls back to Ollama if all cloud providers fail. |
 
 ---
 
@@ -120,6 +137,13 @@ CLAUDE_MAX_TOKENS=16000
 # Controls which providers are tried and in which order.
 # Default when omitted: openai,gemini,claude
 AITLC_PROVIDER_ORDER=gemini,openai,claude
+
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=gemma4
+OLLAMA_VISION_MODEL=gemma4
+OLLAMA_TIMEOUT=600
+OLLAMA_NUM_CTX=32768
+OLLAMA_TEMPERATURE=0
 
 AITLC_REVIEWER=human-qa
 ```
@@ -227,7 +251,41 @@ You can also run:
 aitlc.bat
 ```
 
-## Step 6 — Configure `.env`
+## Step 6 — Install Ollama (optional — required for Offline / Hybrid mode)
+
+Skip this step if you plan to use only cloud providers (OpenAI, Gemini, or Claude).
+
+Download and run the Windows installer from [ollama.com/download/windows](https://ollama.com/download/windows).
+
+After installation, Ollama runs in the background and the `ollama` command is available in PowerShell.
+
+Verify:
+
+```cmd
+ollama --version
+```
+
+### Pull the default model
+
+AI-TLC uses `gemma4` by default. [Gemma 4](https://ollama.com/library/gemma4) supports both text and vision (multimodal) in a single model, so it handles tickets with and without design images:
+
+```cmd
+ollama pull gemma4
+```
+
+The download is several gigabytes. Wait for it to complete before running AI-TLC in Offline or Hybrid mode.
+
+Verify the model is available:
+
+```cmd
+ollama list
+```
+
+You should see `gemma4` in the output.
+
+If you want to use a different model, update `OLLAMA_MODEL` and `OLLAMA_VISION_MODEL` in your `.env` file.
+
+## Step 7 — Configure `.env`
 
 Copy:
 
@@ -241,9 +299,9 @@ to:
 .env
 ```
 
-Then add your own API keys.
+Then add your own API keys. If you are only using Ollama (Offline mode), only the `OLLAMA_*` variables are required — no cloud API keys are needed.
 
-## Step 7 — Verify the ticket
+## Step 8 — Verify the ticket
 
 A ticket must exist as:
 
@@ -296,7 +354,16 @@ Then enter:
 Ticket ID (example TASK-1234): TASK-1234
 ```
 
-AI-TLC automatically reads:
+AI-TLC will then ask you to choose a generation mode:
+
+```text
+Select AI generation mode:
+  1. Cloud
+  2. Offline
+  3. Hybrid
+```
+
+Choose the mode that matches your environment (see section 6 for details), then AI-TLC automatically reads:
 
 ```text
 ticket/TASK-1234.md
@@ -342,7 +409,11 @@ Note
 
 # 6. AI provider fallback
 
-The generation engine follows the order defined in `AITLC_PROVIDER_ORDER`. Each provider is tried in sequence until one succeeds. When `AITLC_PROVIDER_ORDER=gemini,openai,claude` the flow looks like:
+The generation engine follows the order defined in `AITLC_PROVIDER_ORDER` and the chosen generation mode.
+
+## Cloud mode
+
+Only the cloud providers in `AITLC_PROVIDER_ORDER` are used. Example with `AITLC_PROVIDER_ORDER=gemini,openai,claude`:
 
 ```text
 Gemini primary
@@ -356,12 +427,43 @@ Claude
 ERROR: all providers failed
 ```
 
-Key behaviors:
+## Offline mode
 
-- Gemini always tries its primary model first and `GEMINI_FALLBACK_MODEL` second when that model is different from the primary.
-- A provider is automatically skipped (with a printed message) when its API key is not configured — no crash, just a skip.
+Only the local Ollama model is used. No cloud API keys are required.
+
+```text
+Ollama (text or vision model)
+   ↓ fail
+ERROR: all providers failed
+```
+
+Ollama automatically uses `OLLAMA_VISION_MODEL` when design images are present in the ticket, and `OLLAMA_MODEL` for text-only generation.
+
+## Hybrid mode
+
+Tries cloud providers first (in `AITLC_PROVIDER_ORDER` order), then falls back to Ollama:
+
+```text
+Gemini primary
+   ↓ fail
+Gemini fallback
+   ↓ fail
+OpenAI
+   ↓ fail
+Claude
+   ↓ fail
+Ollama
+   ↓ fail
+ERROR: all providers failed
+```
+
+## Key behaviors across all modes
+
+- A cloud provider is automatically skipped (with a printed message) when its API key is not configured.
 - If all configured providers fail, generation stops and no invalid CSV is created.
 - The provider and model used are printed after successful generation.
+
+## SDK notes
 
 The Gemini call uses the Google GenAI Python SDK:
 
@@ -379,7 +481,7 @@ response = client.models.generate_content(
 )
 ```
 
-The OpenAI call uses the Responses API (`client.responses.create`). The Claude call uses the Anthropic Messages API (`client.messages.create`).
+The OpenAI call uses the Responses API (`client.responses.create`). The Claude call uses the Anthropic Messages API (`client.messages.create`). The Ollama call uses the `ollama` Python SDK (`client.chat(...)`) with JSON schema enforcement.
 
 ---
 
@@ -762,11 +864,36 @@ CLAUDE_MAX_TOKENS
 
 Claude images are sent before text in the request payload, which is the recommended pattern for Claude vision calls.
 
+## Ollama fails
+
+Check that Ollama is running locally. On Windows it starts automatically after installation, but you can also start it manually:
+
+```cmd
+ollama serve
+```
+
+Then check these `.env` values:
+
+```text
+OLLAMA_HOST        (default: http://localhost:11434)
+OLLAMA_MODEL       (text generation model)
+OLLAMA_VISION_MODEL (multimodal model for tickets with images)
+OLLAMA_TIMEOUT     (increase this for slow hardware)
+OLLAMA_NUM_CTX     (context window size)
+OLLAMA_TEMPERATURE
+```
+
+If the model is not installed:
+
+```cmd
+ollama pull gemma4
+```
+
 ## All AI providers fail
 
 The workflow stops without claiming that test cases were generated successfully. Check the printed provider errors, API credentials, model names, network connectivity, account limits, and provider availability.
 
-Also verify `AITLC_PROVIDER_ORDER` — only providers listed there are attempted.
+Also verify `AITLC_PROVIDER_ORDER` — only providers listed there are attempted. In Offline mode only Ollama is attempted regardless of `AITLC_PROVIDER_ORDER`.
 
 ## Ticket not found
 
@@ -822,6 +949,7 @@ AI-TLC then performs:
 
 ```text
 ✓ Ticket found
+✓ Generation mode selected (Cloud / Offline / Hybrid)
 ✓ Related Memory searched
 ✓ Related Regression searched
 ✓ Test cases generated
