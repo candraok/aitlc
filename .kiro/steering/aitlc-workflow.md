@@ -1,4 +1,4 @@
-# AI-TLC v5 Workflow Steering Rules
+# AI-TLC v6 Workflow Steering Rules
 
 ## Purpose
 
@@ -35,6 +35,28 @@ Approve
 4. Older historical information
 
 Memory and regression never override an explicit current requirement.
+
+## AI provider rules
+
+### Supported providers
+
+| Provider | Type | Key env vars |
+|----------|------|-------------|
+| OpenAI | Cloud | `OPENAI_API_KEY`, `AITLC_MODEL` |
+| Gemini | Cloud | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` |
+| Claude | Cloud | `CLAUDE_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS` |
+
+### Provider order
+
+`AITLC_PROVIDER_ORDER` controls which providers are tried and in what order.
+Default when not set: `openai,gemini,claude`.
+
+### Fallback behavior
+
+- Providers are tried in `AITLC_PROVIDER_ORDER` sequence.
+- Gemini tries its primary model first, then `GEMINI_FALLBACK_MODEL` (if different).
+- A provider is skipped automatically when its API key is not configured.
+- If all providers fail, generation stops. No invalid CSV is written.
 
 ## Memory rules
 
