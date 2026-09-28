@@ -1,4 +1,8 @@
-# DEMO-001 - Update Customer Profile
+# DEMO-001
+
+## Feature
+
+Update Customer Profile
 
 ## Feature Description
 
@@ -26,3 +30,7 @@ The display name is mandatory and must contain 3 to 50 characters.
 - HTTP status for success: 200
 - Validation errors: 400
 - Authentication error: 401
+
+## UI Design Reference
+
+- design/SCRUM-491/edit_page.png
