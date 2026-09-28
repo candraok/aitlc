@@ -1,4 +1,4 @@
-# AI-TLC v5 Workflow Steering Rules
+# AI-TLC v6 Workflow Steering Rules
 
 ## Purpose
 
@@ -11,6 +11,8 @@ AI-TLC transforms feature tickets into production-oriented QA test cases and mai
 
 ```text
 Ticket
+  ↓
+Select AI generation mode (Cloud / Offline / Hybrid)
   ↓
 Search approved Memory + active Regression
   ↓
@@ -36,6 +38,46 @@ Approve
 
 Memory and regression never override an explicit current requirement.
 
+## AI provider rules
+
+### Supported providers
+
+| Provider | Type | Key env vars |
+|----------|------|-------------|
+| OpenAI | Cloud | `OPENAI_API_KEY`, `AITLC_MODEL` |
+| Gemini | Cloud | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` |
+| Claude | Cloud | `CLAUDE_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS` |
+| Ollama | Local | `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_VISION_MODEL`, `OLLAMA_TIMEOUT`, `OLLAMA_NUM_CTX`, `OLLAMA_TEMPERATURE` |
+
+### Generation modes
+
+The CLI asks the QA engineer to choose a mode before processing each ticket.
+
+| Mode | Behavior |
+|------|----------|
+| Cloud | Uses only the cloud providers in `AITLC_PROVIDER_ORDER`. No Ollama. |
+| Offline | Uses only local Ollama. No cloud API keys required. |
+| Hybrid | Tries cloud providers first; falls back to Ollama if all cloud providers fail. |
+
+### Provider order (cloud)
+
+`AITLC_PROVIDER_ORDER` controls which cloud providers are tried and in what order.
+Default when not set: `openai,gemini,claude`.
+Ollama is not listed in `AITLC_PROVIDER_ORDER`; it is controlled by generation mode.
+
+### Fallback behavior
+
+- Cloud providers are tried in `AITLC_PROVIDER_ORDER` sequence.
+- Gemini tries its primary model first, then `GEMINI_FALLBACK_MODEL` (if different).
+- A cloud provider is skipped automatically when its API key is not configured.
+- In Hybrid mode, Ollama is attempted after all cloud providers have failed.
+- In Offline mode, only Ollama is used regardless of `AITLC_PROVIDER_ORDER`.
+- If all providers fail, generation stops. No invalid CSV is written.
+
+### Ollama vision
+
+Ollama uses `OLLAMA_VISION_MODEL` when the ticket contains design image references, and `OLLAMA_MODEL` for text-only generation. Both default to `gemma4`.
+
 ## Memory rules
 
 - Only human-approved cases are retrieved as active memory.
@@ -55,6 +97,7 @@ Memory and regression never override an explicit current requirement.
 
 A ticket is not complete until:
 
+- generation mode is selected
 - generation succeeds
 - CSV validation passes
 - human QA review is completed
